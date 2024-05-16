@@ -5,15 +5,87 @@ use reqwest::{
 };
 use std::{
     fs::{File, OpenOptions},
-    io::{BufWriter, Write},
+    io::{BufWriter, Write}, num,
 };
 use tokio;
+
+use serde::{Deserialize, Serialize};
+
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct Contract {
+    accepted: bool,
+    #[serde(rename = "deadlineToAccept")]
+    deadline_to_accept: String,
+    #[serde(rename = "expiration")]
+    expiration_date: String,
+    #[serde(rename = "factionSymbol")]
+    faction_symbol: String,
+    fulfilled: bool,
+    id: String,
+    terms: Terms,
+    #[serde(rename = "type")]
+    tpye: String,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct Terms {
+    deadline: String,
+    #[serde(rename = "deliver")]
+    deliveries: Vec<Delivery>,
+    #[serde(rename = "payment")]
+    payment: Payment,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct Payment {
+    #[serde(rename = "onAccepted")]
+    payment_on_accepted: u64,
+    #[serde(rename = "onFulfilled")]
+    payment_on_fulfilled: u64,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct Delivery {
+    #[serde(rename = "destinationSymbol")]
+    destination_symbol: String,
+    #[serde(rename = "tradeSymbol")]
+    trade_symbol: String,
+    #[serde(rename = "unitsFulfilled")]
+    units_fulfilled: u64,
+    #[serde(rename = "unitsRequired")]
+    units_required: u64,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct Meta {
+    limit: u32,
+    page: u32,
+    total: u32,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct Response {
+    data: Vec<Contract>,
+    meta: Meta,
+}
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
     dotenv().ok();
+    let token = check_for_token().await;
 
-    let token = std::env::var("TOKEN").unwrap_or_else(|err| {
+    let agent_data = get_agent_data(&token).await.unwrap();
+    println!("{}", agent_data);
+    let agent_contracts = get_contracts(&token).await.unwrap();
+    // for contract in agent_contracts {
+    //     accept_contract(&token, &contract.id).await.unwrap();
+    // }
+    Ok(())
+}
+
+async fn check_for_token() -> String {
+    return std::env::var("TOKEN").unwrap_or_else(|err| {
         println!("No token found in .env file: {}\n Getting a new one", err);
         let registration_future = async {
             match register_new_agent().await {
@@ -43,9 +115,6 @@ async fn main() -> std::io::Result<()> {
             .unwrap()
             .block_on(registration_future)
     });
-    let agent_data = get_agent_data(&token).await.unwrap();
-    print!("{}", agent_data);
-    Ok(())
 }
 
 async fn register_new_agent() -> Result<serde_json::Value, Box<dyn std::error::Error>> {
@@ -94,4 +163,44 @@ async fn get_agent_data(token: &str) -> Result<serde_json::Value, Box<dyn std::e
 
 
     Ok(body)
+}
+
+
+async fn get_contracts(token: &str) -> Result<Vec<Contract>, Box<dyn std::error::Error>> {
+    let client = reqwest::Client::builder().build()?;
+
+    let mut headers = reqwest::header::HeaderMap::new();
+    let auth_value = format!("Bearer {}", token);
+    headers.insert(AUTHORIZATION, HeaderValue::from_str(&auth_value)?);
+
+    let request = client
+        .request(
+            reqwest::Method::GET,
+            "https://api.spacetraders.io/v2/my/contracts",
+        )
+        .headers(headers);
+
+    let response = request.send().await?;
+    let body = response.json::<Response>().await?;
+    let contracts = body.data;
+    Ok(contracts)
+}
+
+async fn accept_contract(token: &str, contract_id: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let client = reqwest::Client::builder().build()?;
+
+    let mut headers = reqwest::header::HeaderMap::new();
+    let auth_value = format!("Bearer {}", token);
+    headers.insert(AUTHORIZATION, HeaderValue::from_str(&auth_value)?);
+
+    let request = client
+        .request(
+            reqwest::Method::POST,
+            &format!("https://api.spacetraders.io/v2/my/contracts/{}/accept", contract_id),
+        )
+        .headers(headers);
+
+    let _response = request.send().await?;
+
+    Ok(())
 }
